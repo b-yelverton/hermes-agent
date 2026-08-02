@@ -146,6 +146,14 @@ DEFAULT_CONFIG = {
         # (force on/off for all models), or a list of model-name substrings
         # to match (e.g. ["gpt", "codex", "gemini", "qwen"]).
         "tool_use_enforcement": "auto",
+        # Current-turn task compiler: appends a deterministic execution
+        # contract to the copied API user message (not the stored transcript,
+        # not the cached system prompt). This lets users write natural
+        # language while literal/small models get explicit success criteria,
+        # execution order, verification, and approval gates. Values: false
+        # (default off), true/on, or "auto" (currently strict mode for
+        # GPT-5.4-mini-like models only).
+        "task_compiler": "auto",
         # Intent-ack continuation: when the model opens a turn by narrating an
         # action it will take ("I'll go check the logs...") but emits no tool
         # call, intercept the turn-end, inject a "continue now, execute the

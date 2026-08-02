@@ -47,6 +47,7 @@ from agent.model_metadata import (
     estimate_messages_tokens_rough,
     estimate_request_tokens_rough,
 )
+from agent.task_compiler import compile_task_contract
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +56,23 @@ def compose_user_api_content(
     content: Any,
     ext_prefetch_cache: str,
     plugin_user_context: str,
+    task_contract_text: str = "",
 ) -> Optional[str]:
     """Compose the API-bound content of the current turn's user message.
 
-    Sources: memory-manager prefetch + ``pre_llm_call`` plugin context with
-    target="user_message" (the default). Both are appended to the *API copy*
-    of the user message only — the stored content stays clean.
+    Sources: memory-manager prefetch + pre_llm_call plugin context with
+    target="user_message" (the default) + task compiler contract. All are
+    appended to the API copy of the user message only — the stored content
+    stays clean.
 
     This is the single source of that composition. The prologue stamps the
-    result onto the live message as ``api_content`` (persisted alongside the
-    clean content) and the ``api_messages`` build in ``conversation_loop``
-    sends the same helper's output, so the persisted sidecar can never drift
+    result onto the live message as api_content (persisted alongside the
+    clean content) and the api_messages build in conversation_loop
+    sends the same helper output, so the persisted sidecar can never drift
     from the bytes on the wire — which is the whole prompt-cache invariant:
     what turn N sends must be what turn N+1 replays.
 
-    Returns ``None`` when nothing is injected (multimodal/non-string content,
+    Returns None when nothing is injected (multimodal/non-string content,
     or no ephemeral context), meaning the message is sent as-is.
     """
     if not isinstance(content, str):
@@ -81,6 +84,8 @@ def compose_user_api_content(
             injections.append(fenced)
     if plugin_user_context:
         injections.append(plugin_user_context)
+    if task_contract_text:
+        injections.append(task_contract_text)
     if not injections:
         return None
     return content + "\n\n" + "\n\n".join(injections)
@@ -424,6 +429,8 @@ class TurnContext:
     plugin_user_context: str = ""
     # External-memory prefetch result, reused across loop iterations.
     ext_prefetch_cache: str = ""
+    # API-only execution contract compiled from the current user turn.
+    task_contract: Any = None
     # Turn-start preflight already proved an immediate retry ineffective.
     preflight_compression_blocked: bool = False
 
@@ -1168,6 +1175,22 @@ def build_turn_context(
         )
         agent._persist_user_message_idx = current_turn_user_idx
 
+    # Task compiler: build an execution contract from the user's natural language.
+    # Appended only to the copied API user message (not the stored transcript),
+    # so prompt caching and session history stay stable.
+    try:
+        from hermes_cli.config import load_config_readonly
+        _task_compiler_config = load_config_readonly()
+    except Exception:
+        _task_compiler_config = {}
+    task_contract = compile_task_contract(
+        original_user_message if isinstance(original_user_message, str) else user_message,
+        model=getattr(agent, "model", "") or "",
+        provider=getattr(agent, "provider", "") or "",
+        platform=getattr(agent, "platform", "") or "",
+        config=_task_compiler_config,
+    )
+
     # Plugin hook: pre_llm_call (context injected into user message, not system prompt).
     plugin_user_context = ""
     try:
@@ -1320,8 +1343,11 @@ def build_turn_context(
         and messages[current_turn_user_idx].get("role") == "user"
     ):
         _turn_user_msg = messages[current_turn_user_idx]
+        _task_contract_text = ""
+        if task_contract is not None and getattr(task_contract, "enabled", False):
+            _task_contract_text = getattr(task_contract, "text", "")
         _api_content = compose_user_api_content(
-            _turn_user_msg.get("content", ""), ext_prefetch_cache, plugin_user_context
+            _turn_user_msg.get("content", ""), ext_prefetch_cache, plugin_user_context, _task_contract_text
         )
         if _api_content is not None and _api_content != _turn_user_msg.get("content"):
             _turn_user_msg["api_content"] = _api_content
@@ -1404,5 +1430,6 @@ def build_turn_context(
         should_review_memory=should_review_memory,
         plugin_user_context=plugin_user_context,
         ext_prefetch_cache=ext_prefetch_cache,
+        task_contract=task_contract,
         preflight_compression_blocked=_preflight_compression_blocked,
     )

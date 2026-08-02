@@ -1823,6 +1823,7 @@ def run_conversation(
     _should_review_memory = _ctx.should_review_memory
     _plugin_user_context = _ctx.plugin_user_context
     _ext_prefetch_cache = _ctx.ext_prefetch_cache
+    _task_contract = _ctx.task_contract
 
     # Commentary deduplication spans all provider continuations and tool calls
     # within one user turn, but must not suppress the same phrase next turn.
@@ -2148,10 +2149,14 @@ def run_conversation(
                     api_msg["content"] = _api_content
                 else:
                     # Callers that bypass the prologue stamping: compose live.
+                    _tc_text = ""
+                    if _task_contract is not None and getattr(_task_contract, "enabled", False):
+                        _tc_text = getattr(_task_contract, "text", "")
                     _composed = compose_user_api_content(
                         api_msg.get("content", ""),
                         _ext_prefetch_cache,
                         _plugin_user_context,
+                        _tc_text,
                     )
                     if _composed is not None:
                         api_msg["content"] = _composed

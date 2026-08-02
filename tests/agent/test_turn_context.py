@@ -452,3 +452,34 @@ def test_prologue_does_not_title_machine_driven_runs(platform):
     overwritten or never read.
     """
     assert not _title_turn(platform).called
+
+
+def test_task_compiler_contract_is_api_only_and_transcript_safe():
+    """Task contract is compiled for mini models in auto mode and stays API-only."""
+    agent = _FakeAgent()
+    agent.model = "gpt-5.4-mini"
+    with patch("hermes_cli.config.load_config_readonly", return_value={"agent": {"task_compiler": "auto"}}):
+        ctx = _build(agent, user_message="Check whether NeuralWatt GLM-5.2 is configured and working on this machine.")
+
+    # Transcript content stays clean (api_content sidecar may be stamped, but content is untouched)
+    _msg = ctx.messages[-1]
+    assert _msg["role"] == "user"
+    assert _msg["content"] == "Check whether NeuralWatt GLM-5.2 is configured and working on this machine."
+    assert ctx.task_contract is not None
+    assert ctx.task_contract.enabled is True
+    from agent.turn_context import compose_user_api_content
+    _tc_text = ctx.task_contract.text if ctx.task_contract.enabled else ""
+    _api = compose_user_api_content(_msg["content"], "", "", _tc_text)
+    assert _api.startswith("Check whether NeuralWatt GLM-5.2")
+    assert "[Hermes execution contract for this turn]" in _api
+
+
+def test_task_compiler_does_not_run_for_non_mini_in_auto_mode():
+    """Task compiler stays disabled for non-mini models in auto mode."""
+    agent = _FakeAgent()
+    agent.model = "gpt-5.5"
+    with patch("hermes_cli.config.load_config_readonly", return_value={"agent": {"task_compiler": "auto"}}):
+        ctx = _build(agent, user_message="Check the config and verify it.")
+
+    assert ctx.task_contract is not None
+    assert ctx.task_contract.enabled is False
