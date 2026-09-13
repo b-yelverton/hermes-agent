@@ -823,10 +823,10 @@ def get_scan_ordered_skills_dirs() -> List[Path]:
 # write artifacts into the user's checkout).
 
 _PROJECT_SCAN_SOURCE = "project-local"
-# (skill_dir_resolved) -> quarantined bool, keyed per-process; scan_skill_cached
-# already re-scans on content change via the bundle hash, this only avoids
-# re-reading the attestation JSON on every index/list/view call in one run.
-_PROJECT_QUARANTINE_CACHE: Dict[str, bool] = {}
+# (skill_dir_resolved, bundle_hash) -> quarantined bool, keyed per-process.
+# The bundle hash is part of the key so a long-lived gateway/desktop process
+# cannot keep trusting a project skill after the checkout changes underneath it.
+_PROJECT_QUARANTINE_CACHE: Dict[tuple[str, str], bool] = {}
 
 
 def _project_scan_cache_dir() -> Path:
@@ -847,11 +847,14 @@ def is_quarantined_project_skill(skill_md) -> bool:
         key = str(skill_dir.resolve())
     except OSError:
         key = str(skill_dir)
-    cached = _PROJECT_QUARANTINE_CACHE.get(key)
-    if cached is not None:
-        return cached
     try:
-        from tools.skills_guard import scan_skill_cached
+        from tools.skills_guard import full_content_hash, scan_skill_cached
+
+        bundle_hash = full_content_hash(skill_dir)
+        cache_key = (key, bundle_hash)
+        cached = _PROJECT_QUARANTINE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
 
         result, _prov = scan_skill_cached(
             skill_dir,
@@ -872,7 +875,8 @@ def is_quarantined_project_skill(skill_md) -> bool:
             exc_info=True,
         )
         quarantined = True
-    _PROJECT_QUARANTINE_CACHE[key] = quarantined
+        cache_key = (key, "")
+    _PROJECT_QUARANTINE_CACHE[cache_key] = quarantined
     return quarantined
 
 
